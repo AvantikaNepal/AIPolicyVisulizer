@@ -2,6 +2,9 @@ import streamlit as st
 import time
 import fitz
 import re
+from collections import Counter
+import nltk
+from nltk.corpus import stopwords
 
 # --- Sidebar ---
 st.sidebar.title("Navigation")
@@ -61,6 +64,17 @@ if uploaded_file is not None:
     sentences = cleaned_text.split(". ")
     st.subheader("Split Sentences")
     st.write(sentences[:5])  # show first 5 sentences
+
+
+
+    nltk.download('stopwords')
+    stop_words = set(stopwords.words('english'))
+
+    words = [word.lower() for sentence in sentences for word in sentence.split() if word.lower() not in stop_words]
+    word_counts = Counter(words)
+
+    st.subheader("Top Keywords")
+    st.write(word_counts.most_common(10))  # show top 10 keywords
 
 
     # Detected Topics
