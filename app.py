@@ -27,18 +27,6 @@ if uploaded_file is not None:
     # decodig the text file and showing the first 500 characters
     if uploaded_file.type == "text/plain":
         text = uploaded_file.read().decode("utf-8")
-        def clean_text(text):
-            text = re.sub(r'\s+', ' ', text)  # remove extra spaces/newlines
-            # text = re.sub(r'[^a-zA-Z\s]', '', text)  # optional: remove numbers/punctuation
-            return text.strip()
-        cleaned_text = clean_text(text)
-        # st.subheader("🧹 Cleaned Text")
-        # st.write(cleaned_text[:500])
-        st.subheader("Document Previewed")
-        # Simulate AI processing
-        with st.spinner("Analyzing document..."):
-            time.sleep(2)  # fake processing time
-        st.write(cleaned_text[:500] +"......." if len(text) > 500 else text)
     
     elif uploaded_file.type == "application/pdf":
     # Read PDF from uploaded file buffer
@@ -49,12 +37,31 @@ if uploaded_file is not None:
         for page in pdf_doc:
             text += page.get_text()
     
-        st.subheader("Document Preview (PDF)")
-        with st.spinner("Analyzing document..."):
-            time.sleep(2)  # fake processing time
-        st.write(text[:500] + "..." if len(text) > 500 else text)
     else:
         st.write("Unsupported file type plesea upload txt or Pdf!")
+
+
+    def clean_text(text):
+        text = re.sub(r'\s+', ' ', text)  # remove extra spaces/newlines
+        # text = re.sub(r'[^a-zA-Z\s]', '', text)  # optional: remove numbers/punctuation
+        return text.strip()
+    cleaned_text = clean_text(text)
+    # st.subheader("🧹 Cleaned Text")
+    # st.write(cleaned_text[:500])
+    st.subheader("Document Previewed")
+    # Simulate AI processing
+    with st.spinner("Analyzing document..."):
+        time.sleep(2)  # fake processing time
+    st.write(cleaned_text[:500] +"......." if len(text) > 500 else text)
+
+
+
+    
+    # --- Split Into Sentences ---
+    sentences = cleaned_text.split(". ")
+    st.subheader("Split Sentences")
+    st.write(sentences[:5])  # show first 5 sentences
+
 
     # Detected Topics
     st.markdown("---")
