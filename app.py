@@ -9,7 +9,13 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from collections import Counter
 import pandas as pd
+from openai import OpenAI
 
+
+
+
+
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 # --- NLTK setup ---
 nltk.download('stopwords')
 stop_words = set(stopwords.words('english'))
@@ -124,6 +130,42 @@ if uploaded_file:
 
     for kw, sent in topics.items():
         st.markdown(f"- **{kw.capitalize()}** → {sent}")
+
+
+    st.markdown("---")
+    st.subheader("AI Summary")
+
+    if st.button("Generate AI Summary"):
+        with st.spinner("Analyzing document with AI..."):
+            try:
+                # --- MOCK API RESPONSE ---
+                # Comment this block if you have working API credits
+                summary = (
+                    "⚡ This is a mock summary demonstrating AI integration.\n\n"
+                    "1️⃣ First paragraph: The policy document discusses key areas such as governance and sustainability.\n\n"
+                    "2️⃣ Second paragraph: It highlights challenges and proposes potential solutions in education and digital transformation.\n\n"
+                    "3️⃣ Third paragraph: Overall, the document emphasizes strategic priorities for development and policy implementation."
+                )
+
+                # --- REAL API CALL ---
+                # Uncomment this block if your API key is valid and has quota
+                # response = client.chat.completions.create(
+                #     model="gpt-4o-mini",
+                #     messages=[
+                #         {"role": "system", "content": "You are an AI assistant summarizing policy documents clearly and concisely."},
+                #         {"role": "user", "content": f"Summarize this document in 3 short paragraphs: {cleaned_text[:4000]}"}
+                #     ],
+                #     temperature=0.5,
+                # )
+                # summary = response.choices[0].message.content
+
+                st.success("Summary generated successfully!")
+                st.write(summary)
+
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+
 
 
 else:
