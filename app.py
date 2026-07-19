@@ -85,7 +85,7 @@ def readability_summary(text):
     return {
         "Flesch Reading Ease": round(textstat.flesch_reading_ease(text), 1),
         "Grade Level (Flesch-Kincaid)": round(textstat.flesch_kincaid_grade(text), 1),
-        "Words": textstat.lexical_count(text),
+        "Words": textstat.lexicon_count(text),
         "Sentences": textstat.sentence_count(text),
     }
 
@@ -224,7 +224,7 @@ if len(docs) > 1:
         for n in names:
             ob = scan_obligations(docs[n])
             total = ob["Count"].sum() if not ob.empty else 0
-            words = textstat.lexical_count(docs[n])
+            words = textstat.lexicon_count(docs[n])
             density_rows.append({"Document": n, "Obligation terms / 1,000 words": round(total / words * 1000, 2)})
         st.dataframe(pd.DataFrame(density_rows), use_container_width=True, hide_index=True)
 
