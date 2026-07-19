@@ -17,23 +17,49 @@ with as by at from this that these those it its it's not no nor so than then the
 which who whom whose what when where why how all any both each few more most other some such
 only own same can will just don should now shall must may might""".split())
 
+EU_AVG_FRE = 40  # rough real-world benchmark: typical EU/US legislative text scores ~30-45
+
+# Term -> (category, weight). Weight reflects legal "bindingness":
+# 3 = hard binding language, 2 = enforcement/consequence, 1 = soft/discretionary
 OBLIGATION_TERMS = {
-    "shall": "obligation",
-    "must": "obligation",
-    "shall not": "prohibition",
-    "must not": "prohibition",
-    "prohibited": "prohibition",
-    "is prohibited": "prohibition",
-    "may": "discretion",
-    "should": "recommendation",
-    "penalty": "enforcement",
-    "penalties": "enforcement",
-    "fine": "enforcement",
-    "non-compliance": "enforcement",
-    "enforcement": "enforcement",
-    "obligation": "obligation",
-    "responsible for": "obligation",
-    "liable": "enforcement",
+    "shall": ("obligation", 3),
+    "shall not": ("prohibition", 3),
+    "must": ("obligation", 3),
+    "must not": ("prohibition", 3),
+    "is required to": ("obligation", 3),
+    "are required to": ("obligation", 3),
+    "requires": ("obligation", 3),
+    "required": ("obligation", 3),
+    "requirement": ("obligation", 2),
+    "obligation": ("obligation", 3),
+    "obligations": ("obligation", 3),
+    "obliged": ("obligation", 3),
+    "duty to": ("obligation", 3),
+    "responsible for": ("obligation", 2),
+    "responsibility": ("obligation", 2),
+    "ensure that": ("obligation", 2),
+    "mandatory": ("obligation", 3),
+    "in accordance with": ("obligation", 1),
+    "compliance": ("obligation", 2),
+    "non-compliance": ("enforcement", 2),
+    "prohibited": ("prohibition", 3),
+    "is prohibited": ("prohibition", 3),
+    "forbidden": ("prohibition", 3),
+    "not permitted": ("prohibition", 3),
+    "penalty": ("enforcement", 2),
+    "penalties": ("enforcement", 2),
+    "fine": ("enforcement", 2),
+    "fines": ("enforcement", 2),
+    "sanction": ("enforcement", 2),
+    "sanctions": ("enforcement", 2),
+    "enforcement": ("enforcement", 2),
+    "liable": ("enforcement", 2),
+    "liability": ("enforcement", 2),
+    "may": ("discretion", 1),
+    "should": ("recommendation", 1),
+    "recommended": ("recommendation", 1),
+    "encouraged to": ("recommendation", 1),
+    "responsible authority": ("obligation", 1),
 }
 
 # ---------------- Core functions ----------------
@@ -70,15 +96,24 @@ def word_frequencies(text, top_n=15):
 
 
 def scan_obligations(text):
-    """Count occurrences of obligation/prohibition/enforcement language."""
+    """Count occurrences of obligation/prohibition/enforcement language, with a bindingness weight per term."""
     lower = text.lower()
     rows = []
-    for term, category in OBLIGATION_TERMS.items():
+    for term, (category, weight) in OBLIGATION_TERMS.items():
         n = len(re.findall(r"\b" + re.escape(term) + r"\b", lower))
         if n:
-            rows.append({"Term": term, "Category": category, "Count": n})
-    df = pd.DataFrame(rows).sort_values("Count", ascending=False) if rows else pd.DataFrame(columns=["Term", "Category", "Count"])
+            rows.append({"Term": term, "Category": category, "Count": n, "Weight": weight, "Weighted Score": n * weight})
+    cols = ["Term", "Category", "Count", "Weight", "Weighted Score"]
+    df = pd.DataFrame(rows, columns=cols).sort_values("Weighted Score", ascending=False) if rows else pd.DataFrame(columns=cols)
     return df
+
+
+def obligation_density(text):
+    """Weighted obligation-language density per 1,000 words — a rough 'bindingness score'."""
+    ob = scan_obligations(text)
+    weighted_total = ob["Weighted Score"].sum() if not ob.empty else 0
+    words = textstat.lexicon_count(text) or 1
+    return round(weighted_total / words * 1000, 2)
 
 
 def readability_summary(text):
@@ -140,7 +175,11 @@ def build_pdf_brief(doc_name, freq_dict, obligations_df, readability):
         pdf.cell(0, 7, "  None detected.", ln=True)
     else:
         for _, row in obligations_df.iterrows():
-            pdf.cell(0, 7, f"  {row['Term']} ({row['Category']}): {row['Count']}", ln=True)
+            pdf.cell(
+                0, 7,
+                f"  {row['Term']} ({row['Category']}, weight {row['Weight']}): {row['Count']} occurrences",
+                ln=True,
+            )
 
     return bytes(pdf.output(dest="S"))
 
@@ -193,6 +232,12 @@ for i, name in enumerate(docs.keys()):
 
         st.subheader("Readability")
         st.dataframe(pd.DataFrame([readability]), use_container_width=True, hide_index=True)
+        fre = readability["Flesch Reading Ease"]
+        vs_benchmark = "harder to read than" if fre < EU_AVG_FRE else "about as easy to read as, or easier than"
+        st.caption(
+            f"For reference, typical EU/US legislative text scores roughly {EU_AVG_FRE} on Flesch Reading Ease. "
+            f"This document ({fre}) is {vs_benchmark} typical regulatory text."
+        )
 
         pdf_bytes = build_pdf_brief(name, freq, obligations, readability)
         st.download_button(
@@ -219,410 +264,46 @@ if len(docs) > 1:
         top_per_doc = {n: tfidf_df.loc[n].sort_values(ascending=False).head(8) for n in names}
         st.dataframe(pd.DataFrame(top_per_doc), use_container_width=True)
 
-        st.write("Obligation-language density (occurrences per 1,000 words):")
-        density_rows = []
-        for n in names:
-            ob = scan_obligations(docs[n])
-            total = ob["Count"].sum() if not ob.empty else 0
-            words = textstat.lexicon_count(docs[n])
-            density_rows.append({"Document": n, "Obligation terms / 1,000 words": round(total / words * 1000, 2)})
-        st.dataframe(pd.DataFrame(density_rows), use_container_width=True, hide_index=True)
+        st.write("Obligation-language density (weighted score per 1,000 words — higher = more legally binding tone):")
+        density_map = {n: obligation_density(docs[n]) for n in names}
+        density_df = pd.DataFrame(
+            [{"Document": n, "Bindingness score / 1,000 words": v} for n, v in density_map.items()]
+        )
+        st.dataframe(density_df, use_container_width=True, hide_index=True)
 
         st.write("Readability comparison:")
-        read_rows = [{"Document": n, **readability_summary(docs[n])} for n in names]
+        readability_map = {n: readability_summary(docs[n]) for n in names}
+        read_rows = [{"Document": n, **readability_map[n]} for n in names]
         st.dataframe(pd.DataFrame(read_rows), use_container_width=True, hide_index=True)
-# import streamlit as st
-# import fitz
-# import re
-# import nltk
-# from nltk.corpus import stopwords
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# from wordcloud import WordCloud
-# import matplotlib.pyplot as plt
-# import io
 
-# # ---------------- NLTK Setup ----------------
-# def ensure_nltk_data():
-#     """Download stopwords/punkt only if not already present (avoids network hit on every rerun)."""
-#     for pkg, path in [("stopwords", "corpora/stopwords"), ("punkt", "tokenizers/punkt")]:
-#         try:
-#             nltk.data.find(path)
-#         except LookupError:
-#             nltk.download(pkg, quiet=True)
+        # ---- Auto-generated interpretive summary (rule-based, not AI) ----
+        st.subheader("Summary")
+        most_binding = max(density_map, key=density_map.get)
+        least_binding = min(density_map, key=density_map.get)
+        hardest_read = min(readability_map, key=lambda n: readability_map[n]["Flesch Reading Ease"])
+        easiest_read = max(readability_map, key=lambda n: readability_map[n]["Flesch Reading Ease"])
 
-# ensure_nltk_data()
-# stop_words = set(stopwords.words('english'))
+        insights = []
+        if most_binding != least_binding and density_map[least_binding] > 0:
+            ratio = round(density_map[most_binding] / max(density_map[least_binding], 0.01), 1)
+            insights.append(
+                f"**{most_binding}** shows the highest concentration of binding language "
+                f"(shall/must/prohibited/penalty-type terms) — roughly **{ratio}x** the density of "
+                f"**{least_binding}**, suggesting a more strictly regulatory posture."
+            )
+        elif density_map[most_binding] == 0:
+            insights.append("None of the uploaded documents contain notable obligation/prohibition language.")
 
-# # ---------------- Helper Functions ----------------
-# def clean_text(text):
-#     """Remove extra spaces/newlines."""
-#     return re.sub(r'\s+', ' ', text).strip()
+        if hardest_read != easiest_read:
+            insights.append(
+                f"**{hardest_read}** is the hardest to read (Flesch Reading Ease "
+                f"{readability_map[hardest_read]['Flesch Reading Ease']}), while **{easiest_read}** is the "
+                f"most accessible ({readability_map[easiest_read]['Flesch Reading Ease']})."
+            )
 
-# def extract_text(uploaded_file):
-#     """Read text from txt or PDF. Returns (full_text, list_of_page_or_paragraph_chunks)."""
-#     if uploaded_file.type == "text/plain":
-#         raw = uploaded_file.read().decode("utf-8", errors="ignore")
-#         # Treat paragraphs as "documents" for a real TF-IDF corpus
-#         chunks = [p for p in raw.split("\n\n") if p.strip()]
-#         if not chunks:
-#             chunks = [raw]
-#         return raw, chunks
-
-#     elif uploaded_file.type == "application/pdf":
-#         try:
-#             pdf_bytes = uploaded_file.read()
-#             pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-#         except Exception as e:
-#             st.error(f"Couldn't read this PDF — it may be corrupted or encrypted. ({e})")
-#             st.stop()
-
-#         pages = [page.get_text() for page in pdf_doc]
-#         pages = [p for p in pages if p.strip()]
-#         full_text = "".join(pages)
-
-#         if not full_text.strip():
-#             st.error(
-#                 "No extractable text found. This PDF may be a scanned image "
-#                 "(needs OCR) rather than real text."
-#             )
-#             st.stop()
-
-#         return full_text, pages
-
-#     else:
-#         st.error("Unsupported file type. Please upload .txt or .pdf")
-#         st.stop()
-
-# def get_top_keywords(chunks, top_n=10):
-#     """
-#     Return top TF-IDF keywords computed over a real corpus (pages/paragraphs),
-#     not a single-document list, so IDF actually differentiates terms.
-#     Falls back gracefully if there's only one chunk.
-#     """
-#     vectorizer = TfidfVectorizer(stop_words=list(stop_words), max_features=50)
-#     tfidf_matrix = vectorizer.fit_transform(chunks)
-#     feature_names = vectorizer.get_feature_names_out()
-#     # Average TF-IDF score per term across all chunks
-#     scores = tfidf_matrix.mean(axis=0).A1
-#     tfidf_dict = dict(zip(feature_names, scores))
-#     top_keywords = sorted(tfidf_dict.items(), key=lambda x: x[1], reverse=True)[:top_n]
-#     return tfidf_dict, top_keywords
-
-# def plot_bar_chart(top_keywords):
-#     """Matplotlib bar chart for crisp bars."""
-#     keywords, scores = zip(*top_keywords)
-#     fig, ax = plt.subplots(figsize=(8, 5))
-#     ax.bar(keywords, [s * 100 for s in scores], color='skyblue')
-#     ax.set_ylabel("TF-IDF Score (%)")
-#     ax.set_xticklabels(keywords, rotation=45, ha="right")
-#     fig.tight_layout()
-#     st.pyplot(fig)
-#     plt.close(fig)
-
-# def generate_wordcloud(tfidf_dict):
-#     """Generate and display word cloud."""
-#     wordcloud = WordCloud(width=800, height=400, background_color="white").generate_from_frequencies(tfidf_dict)
-#     fig, ax = plt.subplots(figsize=(10, 5))
-#     ax.imshow(wordcloud, interpolation='bilinear')
-#     ax.axis("off")
-#     st.pyplot(fig)
-#     plt.close(fig)
-
-# def chunk_by_sentences(text, max_chars=3000):
-#     """
-#     Sentence-aware chunking for summarization: packs whole sentences up to
-#     max_chars instead of slicing mid-sentence/mid-word.
-#     """
-#     sentences = nltk.sent_tokenize(text)
-#     chunks, current = [], ""
-#     for sent in sentences:
-#         if len(current) + len(sent) + 1 <= max_chars:
-#             current = (current + " " + sent).strip()
-#         else:
-#             if current:
-#                 chunks.append(current)
-#             current = sent
-#     if current:
-#         chunks.append(current)
-#     return chunks
-
-# @st.cache_resource
-# def load_summarizer():
-#     from transformers import pipeline
-#     return pipeline("summarization", model="facebook/bart-large-cnn")
-
-# # ---------------- Sidebar ----------------
-# st.sidebar.title("Navigation")
-# page = st.sidebar.radio("Go to", ["Upload", "Visualization", "Summary", "About"])
-
-# # ---------------- Header ----------------
-# st.title("AI Policy Visualizer")
-# st.write("Upload a policy document and visualize its main themes!")
-
-# # ---------------- Upload Page ----------------
-# if page == "Upload":
-#     uploaded_file = st.file_uploader("Choose a policy document", type=["pdf", "txt"])
-#     if uploaded_file:
-#         full_text, chunks = extract_text(uploaded_file)
-#         cleaned_text = clean_text(full_text)
-#         st.subheader("Document Preview")
-#         st.write(cleaned_text[:500] + "......." if len(cleaned_text) > 500 else cleaned_text)
-
-#         # Save for other pages, and reset any stale cached results from a previous upload
-#         st.session_state['text'] = cleaned_text
-#         st.session_state['chunks'] = [clean_text(c) for c in chunks]
-#         st.session_state.pop('top_keywords', None)
-#         st.session_state.pop('tfidf_dict', None)
-#         st.session_state.pop('summary', None)
-#     else:
-#         st.warning("Upload a document to continue.")
-
-# # ---------------- Visualization Page ----------------
-# elif page == "Visualization":
-#     if 'text' not in st.session_state:
-#         st.warning("Please upload a document first.")
-#     else:
-#         cleaned_text = st.session_state['text']
-#         sentences = cleaned_text.split(". ")
-
-#         # Compute once, cache in session state so we don't redo this on every page visit
-#         if 'top_keywords' not in st.session_state:
-#             tfidf_dict, top_keywords = get_top_keywords(st.session_state['chunks'])
-#             st.session_state['tfidf_dict'] = tfidf_dict
-#             st.session_state['top_keywords'] = top_keywords
-
-#         st.subheader("Top Keywords (TF-IDF)")
-#         plot_bar_chart(st.session_state['top_keywords'])
-
-#         st.subheader("Word Cloud")
-#         generate_wordcloud(st.session_state['tfidf_dict'])
-
-#         # Download keyword table
-#         import pandas as pd
-#         kw_df = pd.DataFrame(st.session_state['top_keywords'], columns=["Keyword", "TF-IDF Score"])
-#         st.download_button(
-#             "Download keywords (CSV)",
-#             kw_df.to_csv(index=False),
-#             file_name="top_keywords.csv",
-#             mime="text/csv",
-#         )
-
-#         if st.checkbox("Show first 5 sentences"):
-#             st.write(sentences[:5])
-
-# # ---------------- Summary Page ----------------
-# elif page == "Summary":
-#     if 'text' not in st.session_state:
-#         st.warning("Please upload a document first.")
-#     else:
-#         cleaned_text = st.session_state['text']
-
-#         st.subheader("Local AI Summary")
-
-#         try:
-#             summarizer = load_summarizer()
-#         except Exception as e:
-#             summarizer = None
-#             st.error(
-#                 "Couldn't load the summarization model. Check your internet connection "
-#                 f"and available disk space. ({e})"
-#             )
-
-#         if summarizer and st.button("Generate Summary"):
-#             chunks = chunk_by_sentences(cleaned_text, max_chars=3000)
-#             summaries = []
-#             progress = st.progress(0.0, text=f"Summarizing chunk 0/{len(chunks)}")
-
-#             try:
-#                 for i, chunk in enumerate(chunks, start=1):
-#                     # Skip tiny leftover chunks that are too short to summarize meaningfully
-#                     if len(chunk.split()) < 15:
-#                         summaries.append(chunk)
-#                     else:
-#                         result = summarizer(chunk, max_length=180, min_length=60, do_sample=False)
-#                         summaries.append(result[0]['summary_text'])
-#                     progress.progress(i / len(chunks), text=f"Summarizing chunk {i}/{len(chunks)}")
-
-#                 final_summary = " ".join(summaries)
-#                 st.session_state['summary'] = final_summary
-#                 progress.empty()
-#                 st.success("Summary generated successfully!")
-#             except Exception as e:
-#                 progress.empty()
-#                 st.error(f"Summarization failed partway through: {e}")
-
-#         if 'summary' in st.session_state:
-#             st.write(st.session_state['summary'])
-#             st.download_button(
-#                 "Download summary (.txt)",
-#                 st.session_state['summary'],
-#                 file_name="summary.txt",
-#                 mime="text/plain",
-#             )
-
-#         # Show TF-IDF keywords as reference (reuse cached version if available)
-#         st.subheader("Summary Keywords")
-#         if 'top_keywords' not in st.session_state:
-#             tfidf_dict, top_keywords = get_top_keywords(st.session_state['chunks'])
-#             st.session_state['tfidf_dict'] = tfidf_dict
-#             st.session_state['top_keywords'] = top_keywords
-#         plot_bar_chart(st.session_state['top_keywords'])
-
-# # ---------------- About Page ----------------
-# elif page == "About":
-#     st.info("""
-#     **AI Policy Visualizer**
-#     - Upload PDF/TXT policy documents
-#     - View top TF-IDF keywords (computed across pages/paragraphs for a real corpus) and word cloud
-#     - Generate local AI summary (offline Hugging Face model), with sentence-aware chunking
-#     - Download keywords and summary
-#     - Created by Avantika N @2025
-#     """)
-# import streamlit as st
-# import time
-# import fitz
-# import re
-# import nltk
-# from nltk.corpus import stopwords
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# from wordcloud import WordCloud
-# import matplotlib.pyplot as plt
-# import pandas as pd
-# from transformers import pipeline
-
-# # ---------------- NLTK Setup ----------------
-# nltk.download('stopwords')
-# stop_words = set(stopwords.words('english'))
-
-# # ---------------- Helper Functions ----------------
-# def clean_text(text):
-#     """Remove extra spaces/newlines."""
-#     return re.sub(r'\s+', ' ', text).strip()
-
-# def extract_text(uploaded_file):
-#     """Read text from txt or PDF."""
-#     if uploaded_file.type == "text/plain":
-#         return uploaded_file.read().decode("utf-8")
-#     elif uploaded_file.type == "application/pdf":
-#         pdf_bytes = uploaded_file.read()  #uploades the bianry chuck file of pdf from st memroy to pdf_bytes
-#         pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")   #fitz convertes the binary file into human readable file
-#         text = ""
-#         for page in pdf_doc:
-#             text += page.get_text()
-#         return text
-#     else:
-#         st.error("Unsupported file type. Please upload .txt or .pdf")
-#         st.stop()
-
-# def get_top_keywords(text, top_n=10):
-#     """Return top TF-IDF keywords."""
-#     vectorizer = TfidfVectorizer(stop_words=list(stop_words), max_features=50) #Sets up a tool to find important words, Tells the app how to process text
-#     tfidf_matrix = vectorizer.fit_transform([text])  #Turns your document into numbers (scores for each word)Converts raw text → meaningful data
-#     feature_names = vectorizer.get_feature_names_out()
-#     scores = tfidf_matrix.toarray()[0]
-#     tfidf_dict = dict(zip(feature_names, scores)) #pairs each word with its frequency in a dict to a tuple
-#     top_keywords = sorted(tfidf_dict.items(), key=lambda x: x[1], reverse=True)[:top_n] #sort the the tuples form the dict , based on the second element of the tuple i.e the frequency, keep the highest ont he first, take the top 10 words only
-#     return tfidf_dict, top_keywords
-
-# def plot_bar_chart(top_keywords):
-#     """Matplotlib bar chart for crisp bars."""
-#     keywords, scores = zip(*top_keywords)
-#     plt.figure(figsize=(8,5)) #plot will be 8 inches wide and 5 inches tall
-#     plt.bar(keywords, [s*100 for s in scores], color='skyblue') #(x axis-> label, y axis-> numbers turned onto percentde, color-> color of the bar)
-#     plt.ylabel("TF-IDF Score (%)")
-#     plt.xticks(rotation=45) #rotates the x axis lables (keywords) to 45 degrees to make it clean and readle
-#     plt.tight_layout()
-#     st.pyplot(plt)
-#     plt.clf()  #clears the current figure form the memory to avoid overwrite or mix
-
-# def generate_wordcloud(tfidf_dict):
-#     """Generate and display word cloud."""
-#     wordcloud = WordCloud(width=800, height=400, background_color="white").generate_from_frequencies(tfidf_dict)
-#     fig, ax = plt.subplots(figsize=(10,5))
-#     ax.imshow(wordcloud, interpolation='bilinear')
-#     ax.axis("off")
-#     st.pyplot(fig)
-#     plt.clf()
-
-# # ---------------- Sidebar ----------------
-# st.sidebar.title("Navigation")
-# page = st.sidebar.radio("Go to", ["Upload", "Visualization", "Summary", "About"])
-
-# # ---------------- Header ----------------
-# st.title("AI Policy Visualizer")
-# st.write("Upload a policy document and visualize its main themes!")
-
-# # ---------------- Upload Page ----------------
-# if page == "Upload":
-#     uploaded_file = st.file_uploader("Choose a policy document", type=["pdf","txt"])
-#     if uploaded_file:
-#         text = extract_text(uploaded_file)
-#         cleaned_text = clean_text(text)
-#         st.subheader("Document Preview")
-#         st.write(cleaned_text[:500] + "......." if len(cleaned_text) > 500 else cleaned_text)
-#         st.session_state['text'] = cleaned_text  # Save for other pages
-#     else:
-#         st.warning("Upload a document to continue.")
-
-# # ---------------- Visualization Page ----------------
-# elif page == "Visualization":
-#     if 'text' not in st.session_state:
-#         st.warning("Please upload a document first.")
-#     else:
-#         cleaned_text = st.session_state['text']
-#         sentences = cleaned_text.split(". ")
-        
-#         # TF-IDF Top Keywords
-#         st.subheader("Top Keywords (TF-IDF)")
-#         tfidf_dict, top_keywords = get_top_keywords(cleaned_text)
-#         plot_bar_chart(top_keywords)
-
-#         # Word Cloud
-#         st.subheader("Word Cloud")
-#         generate_wordcloud(tfidf_dict)
-
-#         # Optional: show first 5 sentences
-#         if st.checkbox("Show first 5 sentences"):
-#             st.write(sentences[:5])
-
-# # ---------------- Summary Page ----------------
-# elif page == "Summary":
-#     if 'text' not in st.session_state:
-#         st.warning("Please upload a document first.")
-#     else:
-#         cleaned_text = st.session_state['text']
-
-#         st.subheader("Local AI Summary")
-#         @st.cache_resource
-#         def load_summarizer():
-#             return pipeline("summarization", model="facebook/bart-large-cnn")     #Loads a BART summarization model  Pretrained summarization model from Hugging Face
-#             #pipeline() = Hugging Face’s built-in API for model tasks.
-#             # pipeline('summarization')-> is like an endpoint of openAI API that tells to summarize any text that is passed inside this
-#         summarizer = load_summarizer()  
-
-#         if st.button("Generate Summary"):
-#             with st.spinner("Generating summary..."):
-#                 # Chunking for long text
-#                 chunks = [cleaned_text[i:i+3000] for i in range(0, len(cleaned_text), 3000)]
-#                 summaries = []
-#                 for chunk in chunks:
-#                     summary = summarizer(chunk, max_length=180, min_length=60, do_sample=False)
-#                     summaries.append(summary[0]['summary_text'])
-#                 final_summary = " ".join(summaries)
-#                 st.success("Summary generated successfully!")
-#                 st.write(final_summary)
-
-#         # Show TF-IDF keywords as reference
-#         st.subheader("Summary Keywords")
-#         _, top_keywords = get_top_keywords(cleaned_text)
-#         plot_bar_chart(top_keywords)
-
-# # ---------------- About Page ----------------
-# elif page == "About":
-#     st.info("""
-#     **AI Policy Visualizer**  
-#     - Upload PDF/TXT policy documents  
-#     - View top TF-IDF keywords and word cloud  
-#     - Generate local AI summary (offline Hugging Face model) 
-#     - Created by Avantika N @2025 
-#     """)
+        for line in insights:
+            st.markdown(f"- {line}")
+        st.caption(
+            "These summaries are generated from rule-based term counts and standard readability formulas, "
+            "not an AI model — figures are reproducible and auditable."
+        )
