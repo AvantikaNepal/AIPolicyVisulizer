@@ -31,6 +31,10 @@ Upload the EU AI Act and the OECD AI Principles side by side. The Compare tab su
 ![Cross-document comparison](screenshots/compare.png)
 *Side-by-side comparison of two documents with an auto-generated interpretive summary.*
 
+
+## Live Demo:
+https://aipolicyvisulizer-4vmaixdpm5hcnssgstwcuj.streamlit.app/
+
 ## Tech stack
 
 - **Streamlit** — UI
